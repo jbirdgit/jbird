@@ -1,0 +1,37 @@
+name: Android APK
+
+on:
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Build APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk parking-sms.apk
+          gh release delete apk --yes --cleanup-tag || true
+          gh release create apk parking-sms.apk \
+            --target "$GITHUB_SHA" \
+            --title "СМС Паркиране (Android)" \
+            --notes "Свалете parking-sms.apk на телефона и го инсталирайте."
