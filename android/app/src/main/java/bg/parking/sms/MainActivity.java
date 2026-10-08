@@ -20,6 +20,7 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -51,6 +52,7 @@ public class MainActivity extends Activity {
     private View statusBox;
     private TextView statusText, timerText;
     private EditText cfgBlue, cfgGreen, cfgMinutes;
+    private CheckBox cfgConfirm;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -96,6 +98,7 @@ public class MainActivity extends Activity {
         cfgBlue = findViewById(R.id.cfgBlue);
         cfgGreen = findViewById(R.id.cfgGreen);
         cfgMinutes = findViewById(R.id.cfgMinutes);
+        cfgConfirm = findViewById(R.id.cfgConfirm);
 
         plateInput.setText(prefs.getString("current", ""));
         cfgBlue.setText(zoneNumber("blue"));
@@ -105,6 +108,9 @@ public class MainActivity extends Activity {
         saveOnChange(cfgBlue, "cfg.blue");
         saveOnChange(cfgGreen, "cfg.green");
         saveOnChange(cfgMinutes, "cfg.minutes");
+        cfgConfirm.setChecked(prefs.getBoolean("cfg.confirm", true));
+        cfgConfirm.setOnCheckedChangeListener((b, checked) ->
+                prefs.edit().putBoolean("cfg.confirm", checked).apply());
 
         blueButton.setOnClickListener(v -> confirmAndSend("blue", plateInput.getText().toString()));
         greenButton.setOnClickListener(v -> confirmAndSend("green", plateInput.getText().toString()));
@@ -242,15 +248,31 @@ public class MainActivity extends Activity {
             return;
         }
         plateInput.setText(plate);
+        boolean looksValid = BG_PLATE.matcher(plate).matches();
+        // Странен номер винаги се потвърждава, за да не се плати за грешна кола.
+        if (looksValid && !prefs.getBoolean("cfg.confirm", true)) {
+            sendWithPermission(zone, plate);
+            return;
+        }
         String zoneName = zone.equals("blue") ? "Синя зона" : "Зелена зона";
         String msg = "Изпращане на СМС до " + zoneNumber(zone) + " с текст:\n\n" + plate;
-        if (!BG_PLATE.matcher(plate).matches()) {
+        if (!looksValid) {
             msg += "\n\n⚠️ Номерът не прилича на български регистрационен номер.";
         }
+        CheckBox dontAsk = new CheckBox(this);
+        dontAsk.setText("Не питай повече");
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(pad, 0, pad, 0);
+        box.addView(dontAsk);
         new AlertDialog.Builder(this)
                 .setTitle(zoneName)
                 .setMessage(msg)
-                .setPositiveButton("Изпрати", (d, w) -> sendWithPermission(zone, plate))
+                .setView(box)
+                .setPositiveButton("Изпрати", (d, w) -> {
+                    if (dontAsk.isChecked()) cfgConfirm.setChecked(false);
+                    sendWithPermission(zone, plate);
+                })
                 .setNegativeButton("Отказ", null)
                 .show();
     }
