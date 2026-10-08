@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="bg">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e293b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>СМС Паркиране</title>
+<style>
+  :root {
+    --bg: #f1f5f9; --card: #ffffff; --text: #0f172a; --muted: #64748b;
+    --border: #cbd5e1; --blue: #1d4ed8; --green: #15803d; --danger: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --muted: #94a3b8;
+      --border: #334155; --blue: #3b82f6; --green: #22c55e; --danger: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 480px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; text-align: center; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px; margin-bottom: 16px;
+  }
+  label { display: block; font-size: .9rem; color: var(--muted); margin-bottom: 6px; }
+  .row { display: flex; gap: 8px; }
+  input, select {
+    flex: 1; min-width: 0; font-size: 1.1rem; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); color: var(--text);
+  }
+  input#plate { text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
+  button {
+    font: inherit; border: 0; border-radius: 10px; padding: 10px 14px;
+    cursor: pointer; background: var(--border); color: var(--text);
+  }
+  .zones { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .zone {
+    color: #fff; font-size: 1.15rem; font-weight: 700; padding: 22px 8px;
+    border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  }
+  .zone small { font-weight: 400; opacity: .9; font-size: .85rem; }
+  .zone.blue { background: var(--blue); }
+  .zone.green { background: var(--green); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip {
+    padding: 6px 10px; border-radius: 999px; font-size: .9rem;
+    border: 1px solid var(--border); background: var(--bg);
+  }
+  .chip.active { border-color: var(--blue); outline: 2px solid var(--blue); }
+  .chip .x { margin-left: 6px; color: var(--danger); }
+  #status { text-align: center; }
+  #timer { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  details summary { cursor: pointer; color: var(--muted); }
+  details .row { margin-top: 8px; align-items: center; }
+  details .row span { width: 110px; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🅿️ СМС Паркиране</h1>
+
+  <section class="card">
+    <label for="plate">Регистрационен номер</label>
+    <div class="row">
+      <input id="plate" placeholder="CB1234AB" autocomplete="off" autocapitalize="characters" maxlength="10">
+      <button id="save" type="button" title="Запази номера">Запази</button>
+    </div>
+    <div class="chips" id="plates"></div>
+  </section>
+
+  <section class="zones">
+    <button class="zone blue" data-zone="blue" type="button">
+      Синя зона <small id="blue-num"></small>
+    </button>
+    <button class="zone green" data-zone="green" type="button">
+      Зелена зона <small id="green-num"></small>
+    </button>
+  </section>
+
+  <section class="card" id="status" style="margin-top:16px" hidden>
+    <div id="status-text"></div>
+    <div id="timer"></div>
+    <div class="muted">Напомняне 5 минути преди изтичане (ако страницата е отворена).</div>
+    <button id="clear" type="button" style="margin-top:10px">Изчисти</button>
+  </section>
+
+  <details class="card">
+    <summary>Настройки</summary>
+    <div class="row"><span>Синя зона №</span><input id="cfg-blue" inputmode="numeric"></div>
+    <div class="row"><span>Зелена зона №</span><input id="cfg-green" inputmode="numeric"></div>
+    <div class="row"><span>Минути / СМС</span><input id="cfg-minutes" inputmode="numeric"></div>
+    <p class="muted">По подразбиране: София — синя зона 1302, зелена зона 1303, 1 час на СМС.
+      За друг град сменете номерата.</p>
+  </details>
+</main>
+
+<script>
+(() => {
+  const DEFAULTS = { blue: "1302", green: "1303", minutes: 60 };
+  const ZONE_NAMES = { blue: "Синя зона", green: "Зелена зона" };
+  const $ = (id) => document.getElementById(id);
+
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem("parking." + key); return v ? JSON.parse(v) : fallback; }
+      catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem("parking." + key, JSON.stringify(value)); } catch {}
+    },
+  };
+
+  let config = { ...DEFAULTS, ...store.get("config", {}) };
+  let plates = store.get("plates", []);
+  let current = store.get("current", plates[0] || "");
+  let session = store.get("session", null); // { zone, plate, start, minutes }
+  let warned = false;
+
+  // Регистрационните номера в България се изписват с латински букви,
+  // затова превеждаме сходните кирилски букви (А, В, Е, К, М, Н, О, Р, С, Т, Х, У).
+  const CYR_TO_LAT = { А:"A", В:"B", Е:"E", К:"K", М:"M", Н:"H", О:"O", Р:"P", С:"C", Т:"T", Х:"X", У:"Y" };
+  const normalize = (s) =>
+    s.toUpperCase().replace(/[АВЕКМНОРСТХУ]/g, (c) => CYR_TO_LAT[c]).replace(/[^A-Z0-9]/g, "");
+
+  function renderPlates() {
+    const box = $("plates");
+    box.innerHTML = "";
+    for (const p of plates) {
+      const chip = document.createElement("span");
+      chip.className = "chip" + (p === current ? " active" : "");
+      chip.textContent = p;
+      chip.onclick = () => { current = p; $("plate").value = p; store.set("current", p); renderPlates(); };
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "✕";
+      x.onclick = (e) => {
+        e.stopPropagation();
+        plates = plates.filter((q) => q !== p);
+        store.set("plates", plates);
+        renderPlates();
+      };
+      chip.appendChild(x);
+      box.appendChild(chip);
+    }
+  }
+
+  function renderConfig() {
+    $("blue-num").textContent = "СМС до " + config.blue;
+    $("green-num").textContent = "СМС до " + config.green;
+    $("cfg-blue").value = config.blue;
+    $("cfg-green").value = config.green;
+    $("cfg-minutes").value = config.minutes;
+  }
+
+  function smsLink(number, body) {
+    // iOS използва "&body=", Android и останалите — "?body=".
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    return "sms:" + number + (ios ? "&" : "?") + "body=" + encodeURIComponent(body);
+  }
+
+  function send(zone) {
+    const plate = normalize($("plate").value || current);
+    if (!/^[A-Z]{1,2}\d{4}[A-Z]{1,2}$/.test(plate) &&
+        !confirm(`"${plate || "(празно)"}" не прилича на български рег. номер. Да продължа ли?`)) return;
+    if (!plate) return;
+    if (!plates.includes(plate)) { plates.push(plate); store.set("plates", plates); }
+    current = plate; store.set("current", plate);
+    $("plate").value = plate;
+    renderPlates();
+
+    session = { zone, plate, start: Date.now(), minutes: Number(config.minutes) || 60 };
+    store.set("session", session);
+    warned = false;
+    renderStatus();
+    window.location.href = smsLink(config[zone], plate);
+  }
+
+  function renderStatus() {
+    if (!session) { $("status").hidden = true; return; }
+    $("status").hidden = false;
+    const end = session.start + session.minutes * 60000;
+    const left = end - Date.now();
+    const endStr = new Date(end).toLocaleTimeString("bg-BG", { hour: "2-digit", minute: "2-digit" });
+    $("status-text").textContent = `${ZONE_NAMES[session.zone]} · ${session.plate} · до ${endStr}`;
+    if (left <= 0) {
+      $("timer").textContent = "Изтекло!";
+      $("timer").style.color = "var(--danger)";
+      return;
+    }
+    const m = Math.floor(left / 60000), s = Math.floor((left % 60000) / 1000);
+    $("timer").textContent = `${m}:${String(s).padStart(2, "0")}`;
+    $("timer").style.color = left < 5 * 60000 ? "var(--danger)" : "";
+    if (left < 5 * 60000 && !warned) {
+      warned = true;
+      if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("Паркирането изтича след 5 минути", { body: $("status-text").textContent });
+      }
+    }
+  }
+
+  $("save").onclick = () => {
+    const p = normalize($("plate").value);
+    if (!p) return;
+    if (!plates.includes(p)) plates.push(p);
+    current = p;
+    store.set("plates", plates); store.set("current", p);
+    $("plate").value = p;
+    renderPlates();
+  };
+  document.querySelectorAll(".zone").forEach((b) => (b.onclick = () => {
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    send(b.dataset.zone);
+  }));
+  $("clear").onclick = () => { session = null; store.set("session", null); renderStatus(); };
+  for (const key of ["blue", "green", "minutes"]) {
+    $("cfg-" + key).onchange = (e) => {
+      config[key] = e.target.value.trim() || DEFAULTS[key];
+      store.set("config", config);
+      renderConfig();
+    };
+  }
+
+  $("plate").value = current;
+  renderPlates();
+  renderConfig();
+  renderStatus();
+  setInterval(renderStatus, 1000);
+})();
+</script>
+</body>
+</html>
